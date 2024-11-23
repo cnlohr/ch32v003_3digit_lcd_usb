@@ -137,6 +137,9 @@ void UpdateLCD( uint32_t mask )
 	}
 	// Set all pins high preparing for touch.
 	LCDSEGBUF->BSHR = 0x3f;
+	for( group = 0; group < 4; group++ )
+		funDigitalWrite( pinset[group], 1 );
+	Delay_Us(10);
 
 	for( group = 0; group < 4; group++ )
 		funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
@@ -227,7 +230,7 @@ int main()
 				if( rezero > 1600 && press == 0 ) { press = 1; event = 1; }
 				if( rezero < 900 && press == 1) { press = 0; event = 1; }
 
-				//printf( "%d\n", rezero );
+				printf( "%d, %d\n", rezero, touchsum );
 				//if( rezero > 0 ) dv = rezero;
 				if( event && press )
 					dv++;
@@ -238,9 +241,10 @@ int main()
 			touchsum = touchstate = 0;
 		}
 		//Delay_Ms(1);
-	}
-	while(1)
-	{
+//	}
+//	while(1)
+//	{
+#if 0
 		if( !didaffect )
 		{
 			id++;
@@ -250,6 +254,7 @@ int main()
 		{
 			UpdateLCD( lastmask );
 		}
+#endif
 		//printf( "%lu %lu %lu %08lx\n", rv003usb_internal_data.delta_se0_cyccount, rv003usb_internal_data.last_se0_cyccount, rv003usb_internal_data.se0_windup, RCC->CTLR );
 #if RV003USB_EVENT_DEBUGGING
 		uint32_t * ue = GetUEvent();
