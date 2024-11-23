@@ -84,7 +84,8 @@ void UpdateLCD( uint32_t mask )
 {
 	int group;
 
-	#define drivepr GPIO_CFGLR_IN_PUPD
+	//#define drivepr GPIO_CFGLR_IN_PUPD
+	#define drivepr GPIO_CFGLR_OUT_2Mhz_PP
 	for( group = 0; group < 4; group++ )
 		funPinMode( pinset[group], drivepr );
 	funPinMode( LEDSEG0, drivepr );
@@ -93,6 +94,58 @@ void UpdateLCD( uint32_t mask )
 	funPinMode( LEDSEG3, drivepr );
 	funPinMode( LEDSEG4, drivepr );
 	funPinMode( LEDSEG5, drivepr );
+
+
+
+#if 0
+		// kinda works don't recommend
+		LCDSEGBUF->BSHR = 0x3f<<16;
+		for( group = 0; group < 4; group++ )
+			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
+		LCDCOMBUF->BSHR = LCDCOMMASK<<16;
+		for( group = 0; group < 4; group++ )
+		{
+			LCDSEGBUF->BSHR = lmask&0x3f;
+			//funDigitalWrite( pinset[group], 0 );
+			funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
+			Delay_Us(120); // Set higher to increase constrast
+			LCDSEGBUF->BSHR = 0x3f<<16;
+			Delay_Us(10); // Set higher to reduce contrast
+			funDigitalWrite( pinset[group], 1 );
+			Delay_Us(1); // Set higher to reduce contrast
+			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
+			lmask>>=6;
+		}
+#endif
+
+	// Regular, not floating way.
+
+	LCDSEGBUF->BSHR = 0x3f<<16;
+	LCDCOMBUF->BSHR = LCDCOMMASK;
+	int lmask = mask;
+	for( group = 0; group < 4; group++ )
+	{
+		LCDSEGBUF->BSHR = lmask&0x3f;
+		Delay_Us(1);
+		funDigitalWrite( pinset[group], 0 );
+		Delay_Us(100); // Set higher to increase constrast
+		funDigitalWrite( pinset[group], 1 );
+		Delay_Us(1);
+		LCDSEGBUF->BSHR = 0x3f<<16;
+		Delay_Us(10); // Set higher to reduce contrast -- but also may brighten up some of the digit.
+		lmask>>=6;
+	}
+	// Set all pins high preparing for touch.
+	LCDSEGBUF->BSHR = 0x3f;
+
+	for( group = 0; group < 4; group++ )
+		funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
+	funPinMode( LEDSEG0, GPIO_CFGLR_IN_PUPD );
+	funPinMode( LEDSEG1, GPIO_CFGLR_IN_PUPD );
+	funPinMode( LEDSEG2, GPIO_CFGLR_IN_PUPD );
+	funPinMode( LEDSEG3, GPIO_CFGLR_IN_PUPD );
+	funPinMode( LEDSEG4, GPIO_CFGLR_IN_PUPD );
+	funPinMode( LEDSEG5, GPIO_CFGLR_IN_PUPD );
 
 	// Configure touch!
 	// Touch pin = 3 or 6 
@@ -122,49 +175,10 @@ void UpdateLCD( uint32_t mask )
 		ttv += tvd - tvu;
 	}
 	touchval = ttv;
-
-#if 0
-		// kinda works don't recommend
-		LCDSEGBUF->BSHR = 0x3f<<16;
-		for( group = 0; group < 4; group++ )
-			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
-		LCDCOMBUF->BSHR = LCDCOMMASK<<16;
-		for( group = 0; group < 4; group++ )
-		{
-			LCDSEGBUF->BSHR = lmask&0x3f;
-			//funDigitalWrite( pinset[group], 0 );
-			funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
-			Delay_Us(120); // Set higher to increase constrast
-			LCDSEGBUF->BSHR = 0x3f<<16;
-			Delay_Us(10); // Set higher to reduce contrast
-			funDigitalWrite( pinset[group], 1 );
-			Delay_Us(1); // Set higher to reduce contrast
-			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
-			lmask>>=6;
-		}
-#endif
-
-	// Regular, not floating way.
-
 	LCDSEGBUF->BSHR = 0x3f<<16;
-	LCDCOMBUF->BSHR = LCDCOMMASK;
-	for( group = 0; group < 4; group++ )
-		funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
-	int lmask = mask;
-	for( group = 0; group < 4; group++ )
-	{
-		LCDSEGBUF->BSHR = lmask&0x3f;
-		funDigitalWrite( pinset[group], 0 );
-		Delay_Us(60); // Set higher to increase constrast
-		LCDSEGBUF->BSHR = 0x3f<<16;
-		funDigitalWrite( pinset[group], 1 );
-		Delay_Us(40); // Set higher to reduce contrast
-		lmask>>=6;
-	}
-	LCDSEGBUF->BSHR = 0x3f;
+	Delay_Us(120);
 
-	// State here = all lines high.
-	// Delay after this if you wish.
+	// You can wait for a few hundred ms here.
 }
 
 int main()
