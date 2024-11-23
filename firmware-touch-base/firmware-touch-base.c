@@ -16,6 +16,8 @@ uint8_t ledat;
 #define LCDCOM3 PD6
 #define LCDCOM4 PD2
 
+#define LCDCOMBUF GPIOD
+#define LCDCOMMASK ((1<<0) | (1<<7) | (1<<6) | (1<<2))
 #define LCDSEGBUF GPIOC
 
 #define LEDSEG0 PC0
@@ -31,6 +33,7 @@ static uint32_t lastmask;
 
 
 static uint8_t frame;
+static uint32_t touchval;
 
 // LCD Is 10PIN TN Positive 3-Digits 7 Segment LCD Panel 3.0V
 
@@ -82,12 +85,8 @@ void UpdateLCD( uint32_t mask )
 	int group;
 
 	#define drivepr GPIO_CFGLR_IN_PUPD
-
-	LCDSEGBUF->BSHR = 0x3f<<16;
-
 	for( group = 0; group < 4; group++ )
 		funPinMode( pinset[group], drivepr );
-
 	funPinMode( LEDSEG0, drivepr );
 	funPinMode( LEDSEG1, drivepr );
 	funPinMode( LEDSEG2, drivepr );
@@ -95,141 +94,77 @@ void UpdateLCD( uint32_t mask )
 	funPinMode( LEDSEG4, drivepr );
 	funPinMode( LEDSEG5, drivepr );
 
-	for( group = 0; group < 4; group++ )
-	{
-		LCDSEGBUF->BSHR = mask&0x3f;
-		funDigitalWrite( pinset[group], 0 );
-		Delay_Us(300);
-		LCDSEGBUF->BSHR = 0x3f<<16;
-		funDigitalWrite( pinset[group], 1 );
-		Delay_Us(10);
-		mask>>=6;
-	}
-
-	Delay_Us(3000);
-}
-
-static uint32_t ReadTouchPinSpecial( GPIO_TypeDef * io, int portpin, int adcno, int iterations ) __attribute__((noinline, section(".srodata")));
-uint32_t ReadTouchPinSpecial( GPIO_TypeDef * io, int portpin, int adcno, int iterations )
-{
-	int group;
-	uint32_t ret = 0;
-
+	// Configure touch!
+	// Touch pin = 3 or 6 
+	int reads = 0;
+	const int adcno = 3;
+	const int oversample = 20;
 	ADC1->RSQR3 = adcno;
-	ADC1->SAMPTR2 = TOUCH_ADC_SAMPLE_TIME<<(3*adcno);
-
-	// TODO: Control all IO's in unison.
-
-	uint32_t CFGBASE = io->CFGLR & (~(0xf<<(4*portpin)));
-	uint32_t CFGFLOAT = ((GPIO_CFGLR_IN_PUPD)<<(4*portpin)) | CFGBASE;
-	uint32_t CFGDRIVE = (GPIO_CFGLR_OUT_2Mhz_PP)<<(4*portpin) | CFGBASE;
-
-	for( group = 0; group < 4; group++ )
-		funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
-
-	funPinMode( LEDSEG0, GPIO_CFGLR_IN_FLOAT );
-	funPinMode( LEDSEG1, GPIO_CFGLR_IN_FLOAT );
-	funPinMode( LEDSEG2, GPIO_CFGLR_IN_FLOAT );
-	funPinMode( LEDSEG3, GPIO_CFGLR_IN_FLOAT );
-	funPinMode( LEDSEG4, GPIO_CFGLR_IN_FLOAT );
-	funPinMode( LEDSEG5, GPIO_CFGLR_IN_FLOAT );
-		io->CFGLR = CFGDRIVE;                                                   \
-		io->BSHR = 1<<(portpin+(16*(1-TOUCH_SLOPE)));                          \
-
+	#define SPECIAL_TOUCH_ADC_SAMPLE_TIME 0
+	ADC1->SAMPTR2 = SPECIAL_TOUCH_ADC_SAMPLE_TIME<<(3*adcno);
+	int ttv = 0;
+	for( reads = 0; reads < oversample; reads++ )
+	{
+		__disable_irq();
+		LCDSEGBUF->BSHR = 0x3f<<16;
+		LCDCOMBUF->BSHR = LCDCOMMASK<<16;
+		ADC1->CTLR2 = ADC_SWSTART | ADC_ADON | ADC_EXTSEL;
+		__enable_irq();
+		while(!(ADC1->STATR & ADC_EOC));
+		int tvu = ADC1->RDATAR;
+		__disable_irq();
+		LCDSEGBUF->BSHR = 0x3f;
+		LCDCOMBUF->BSHR = LCDCOMMASK;
+		ADC1->CTLR2 = ADC_SWSTART | ADC_ADON | ADC_EXTSEL;
+		__enable_irq();
+		while(!(ADC1->STATR & ADC_EOC));
+		int tvd = ADC1->RDATAR;
+		ttv += tvd - tvu;
+	}
+	touchval = ttv;
 
 #if 0
-#if TOUCH_FLAT == 1
-#define RELEASEIO io->BSHR = 1<<(portpin+16*TOUCH_SLOPE); io->CFGLR = CFGFLOAT;
-#else
-#define RELEASEIO io->CFGLR = CFGFLOAT; io->BSHR = 1<<(portpin+16*TOUCH_SLOPE);
+		// kinda works don't recommend
+		LCDSEGBUF->BSHR = 0x3f<<16;
+		for( group = 0; group < 4; group++ )
+			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
+		LCDCOMBUF->BSHR = LCDCOMMASK<<16;
+		for( group = 0; group < 4; group++ )
+		{
+			LCDSEGBUF->BSHR = lmask&0x3f;
+			//funDigitalWrite( pinset[group], 0 );
+			funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
+			Delay_Us(120); // Set higher to increase constrast
+			LCDSEGBUF->BSHR = 0x3f<<16;
+			Delay_Us(10); // Set higher to reduce contrast
+			funDigitalWrite( pinset[group], 1 );
+			Delay_Us(1); // Set higher to reduce contrast
+			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
+			lmask>>=6;
+		}
 #endif
 
-#define INNER_LOOP( n ) \
-	{ \
-		/* Only lock IRQ for a very narrow window. */                           \
-		__disable_irq();                                                        \
-                                                                                \
-		/* Tricky - we start the ADC BEFORE we transition the pin.  By doing    \
-			this We are catching it onthe slope much more effectively.  */      \
-		ADC1->CTLR2 = ADC_SWSTART | ADC_ADON | ADC_EXTSEL;                      \
-                                                                                \
-		ADD_N_NOPS( n )                                                         \
-                                                                                \
-	funDigitalWrite( pinset[0], 0 );											\
-	funDigitalWrite( pinset[1], 0 );											\
-	funDigitalWrite( pinset[2], 0 );											\
-	funDigitalWrite( pinset[3], 0 );											\
-																			    \
-		/* Sampling actually starts here, somewhere, so we can let other        \
-			interrupts run */                                                   \
-		__enable_irq();                                                         \
-		while(!(ADC1->STATR & ADC_EOC));                                        \
-	funDigitalWrite( pinset[0], 1 );											\
-	funDigitalWrite( pinset[1], 1 );											\
-	funDigitalWrite( pinset[2], 1 );											\
-	funDigitalWrite( pinset[3], 1 );											\
-		ret += ADC1->RDATAR;                                                    \
-	}
-#endif
+	// Regular, not floating way.
 
-
-
-#if TOUCH_FLAT == 1
-#define RELEASEIO io->BSHR = 1<<(portpin+16*TOUCH_SLOPE); io->CFGLR = CFGFLOAT;
-#else
-#define RELEASEIO io->CFGLR = CFGFLOAT; io->BSHR = 1<<(portpin+16*TOUCH_SLOPE);
-#endif
-
-#define INNER_LOOP( n ) \
-	{ \
-		/* Only lock IRQ for a very narrow window. */                           \
-		__disable_irq();                                                        \
-                                                                                \
-		/* Tricky - we start the ADC BEFORE we transition the pin.  By doing    \
-			this We are catching it onthe slope much more effectively.  */      \
-		ADC1->CTLR2 = ADC_SWSTART | ADC_ADON | ADC_EXTSEL;                      \
-                                                                                \
-		ADD_N_NOPS( n )                                                         \
-                                                                                \
-		RELEASEIO                                                               \
-																			    \
-		/* Sampling actually starts here, somewhere, so we can let other        \
-			interrupts run */                                                   \
-		__enable_irq();                                                         \
-		while(!(ADC1->STATR & ADC_EOC));                                        \
-		io->CFGLR = CFGDRIVE;                                                   \
-		io->BSHR = 1<<(portpin+(16*(1-TOUCH_SLOPE)));                          \
-		ret += ADC1->RDATAR;                                                    \
-	}
-
-
-	int i;
-	for( i = 0; i < iterations; i++ )
-	{
-		// Wait a variable amount of time based on loop iteration, in order
-		// to get a variety of RC points and minimize DNL.
-
-		INNER_LOOP( 0 );
-		//INNER_LOOP( 2 );
-		//INNER_LOOP( 4 );
-	}
-
+	LCDSEGBUF->BSHR = 0x3f<<16;
+	LCDCOMBUF->BSHR = LCDCOMMASK;
 	for( group = 0; group < 4; group++ )
-		funPinMode( pinset[group], drivepr );
+		funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
+	int lmask = mask;
+	for( group = 0; group < 4; group++ )
+	{
+		LCDSEGBUF->BSHR = lmask&0x3f;
+		funDigitalWrite( pinset[group], 0 );
+		Delay_Us(60); // Set higher to increase constrast
+		LCDSEGBUF->BSHR = 0x3f<<16;
+		funDigitalWrite( pinset[group], 1 );
+		Delay_Us(40); // Set higher to reduce contrast
+		lmask>>=6;
+	}
+	LCDSEGBUF->BSHR = 0x3f;
 
-	funPinMode( LEDSEG0, drivepr );
-	funPinMode( LEDSEG1, drivepr );
-	funPinMode( LEDSEG2, drivepr );
-	funPinMode( LEDSEG3, drivepr );
-	funPinMode( LEDSEG4, drivepr );
-	funPinMode( LEDSEG5, drivepr );
-	return ret;
-}
-int ReadTouch() __attribute__((noinline)) __attribute((section(".srodata")));
-int ReadTouch()
-{
-	return ReadTouchPinSpecial( GPIOD, 6, 6, 2 ) + ReadTouchPinSpecial( GPIOD, 2, 3, 2 );
-		// ReadTouchPinSpecial( GPIOC, 4, 2, 2 ) +
+	// State here = all lines high.
+	// Delay after this if you wish.
 }
 
 int main()
@@ -247,35 +182,36 @@ int main()
 	int id = 0;
 	int didaffect = 0;
 
-	int calstage = 32;
+	int calstage = 64;
 	int cal = 0;
 	int press = 0;
-	uint32_t sum = 0;
+	int touchstate = 0;
+	int touchsum = 0;
+
+
 	int dv = 0;
 	while(1)
 	{
 		id++;
 		int group;
+		UpdateLCD( ComputeLCDMaskWithNumber( dv ) );
+		touchsum += touchval;
 
-		#define drivepr GPIO_CFGLR_IN_PUPD
-
-		sum += ReadTouch();
-
-		if( (id & 7) == 7 )
+		if( touchstate++ > 20 )
 		{
 			if( calstage > 0 )
 			{
 				calstage--;
-				if( calstage < 16 ) cal += sum;
+				if( calstage < 16 ) cal += touchsum;
 			}
 			else
 			{
 				int event = 0;
-				int rezero = sum-(cal>>4);
-				if( rezero < -5 ) cal-=10;
-				if( rezero > 1 ) cal++;
-				if( rezero > 2000 && press == 0 ) { press = 1; event = 1; }
-				if( rezero < 200 && press == 1) { press = 0; event = 1; }
+				int rezero = (cal>>4) - touchsum;
+				if( rezero > 10 ) cal-=100;
+				if( rezero < -200 ) cal+=2000;
+				if( rezero > 1600 && press == 0 ) { press = 1; event = 1; }
+				if( rezero < 900 && press == 1) { press = 0; event = 1; }
 
 				//printf( "%d\n", rezero );
 				//if( rezero > 0 ) dv = rezero;
@@ -283,11 +219,11 @@ int main()
 					dv++;
 				//	printf( "*** %d\n", press );
 			}
-			sum = 0;
-		}
 
-		UpdateLCD( ComputeLCDMaskWithNumber( dv ) );
-		Delay_Ms(1);
+			//printf( "TV: %d\n", touchsum );
+			touchsum = touchstate = 0;
+		}
+		//Delay_Ms(1);
 	}
 	while(1)
 	{
