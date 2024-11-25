@@ -3,14 +3,9 @@
 #include <string.h>
 #include "rv003usb.h"
 
-
-#include "ch32v003_touch.h"
-
 // Allow reading and writing to the scratchpad via HID control messages.
 uint8_t scratch[63];
-uint8_t scratchi[63];
-volatile uint8_t start_out = 0;
-volatile uint8_t start_in = 0;
+volatile uint8_t start_leds = 0;
 uint8_t ledat;
 
 #define LCDCOMBUF GPIOD
@@ -33,14 +28,12 @@ uint8_t ledat;
 #define LCDSEG3 PC3
 #define LCDSEG4 PC4
 #define LCDSEG5 PC5
-static const uint8_t pinset[4] = { LCDCOM1, LCDCOM2, LCDCOM3, LCDCOM4 };
 
 // from host
 static uint32_t lastmask;
 
 
 static uint8_t frame;
-static uint32_t touchval;
 
 // LCD Is 10PIN TN Positive 3-Digits 7 Segment LCD Panel 3.0V
 
@@ -90,43 +83,6 @@ uint32_t ComputeLCDMaskWithNumber( uint32_t val )
 void UpdateLCD( uint32_t mask )
 {
 	int group;
-
-	#define drivepr GPIO_CFGLR_IN_PUPD
-	for( group = 0; group < 4; group++ )
-		funPinMode( pinset[group], drivepr );
-	funPinMode( LCDSEG0, drivepr );
-	funPinMode( LCDSEG1, drivepr );
-	funPinMode( LCDSEG2, drivepr );
-	funPinMode( LCDSEG3, drivepr );
-	funPinMode( LCDSEG4, drivepr );
-	funPinMode( LCDSEG5, drivepr );
-
-
-
-#if 0
-		// kinda works don't recommend
-		LCDSEGBUF->BSHR = 0x3f<<16;
-		for( group = 0; group < 4; group++ )
-			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
-		LCDCOMBUF->BSHR = LCDCOMMASK<<16;
-		for( group = 0; group < 4; group++ )
-		{
-			LCDSEGBUF->BSHR = lmask&0x3f;
-			//funDigitalWrite( pinset[group], 0 );
-			funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
-			Delay_Us(120); // Set higher to increase constrast
-			LCDSEGBUF->BSHR = 0x3f<<16;
-			Delay_Us(10); // Set higher to reduce contrast
-			funDigitalWrite( pinset[group], 1 );
-			Delay_Us(1); // Set higher to reduce contrast
-			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
-			lmask>>=6;
-		}
-#endif
-
-	// Regular, not floating way.
-
-
 	uint8_t pinset[4] = { LCDCOM1, LCDCOM2, LCDCOM3, LCDCOM4 };
 	uint8_t commasks[4] = { LCDCOMMASK1, LCDCOMMASK2, LCDCOMMASK3, LCDCOMMASK4 };
 
@@ -141,7 +97,7 @@ void UpdateLCD( uint32_t mask )
 	funPinMode( LCDSEG4, drivepr );
 	funPinMode( LCDSEG5, drivepr );
 	LCDSEGBUF->BSHR = 0x3f<<16;
-	const int dithers = 1000;
+	const int dithers = 2000;
 
 	int tm = ~mask;
 	for( group = 0; group < 4; group++ )
@@ -165,7 +121,7 @@ void UpdateLCD( uint32_t mask )
 	}
 	// section 1 zero
 	LCDCOMBUF->BSHR = ALLCOMMASK<<16;
-	Delay_Us(1);
+	Delay_Us(0);
 	tm = ~mask;
 	LCDSEGBUF->BSHR = 0x3f;
 	for( group = 0; group < 4; group++ )
@@ -188,162 +144,31 @@ void UpdateLCD( uint32_t mask )
 		tm>>=6;
 	}
 	LCDCOMBUF->BSHR = ALLCOMMASK;
+	Delay_Us(1000);
 
-
-	// Set all pins high preparing for touch.
-	for( group = 0; group < 4; group++ )
-		funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG0, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG1, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG2, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG3, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG4, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG5, GPIO_CFGLR_IN_PUPD );
-
-	for( group = 0; group < 4; group++ )
-		funDigitalWrite( pinset[group], 1 );
-	LCDSEGBUF->BSHR = 0x3f;
-
-	// Configure touch!
-	// Touch pin = 3 or 6 
-	// I tried seeing if you could get data by measuring one or the other, and the answer was basically no.
-	// I couldn't get any extra data.
-	int reads = 0;
-	const int adcno = 3;
-	const int oversample = 300; // Has significant impact over contrast.
-
-#if 1
-#define FORCEALIGN \
-	asm volatile( \
-		"\n\
-		.balign 4\n\
-		andi a2, %[cyccnt], 3\n\
-		c.slli a2, 1\n\
-		c.addi a2, 12\n\
-		auipc a1, 0\n\
-		c.add  a2, a1\n\
-		jalr a2, 1\n\
-		.long 0x00010001\n\
-		.long 0x00010001\n\
-		"\
-		:: [cyccnt]"r"(SysTick->CNT) : "a1", "a2"\
-	);
-#else
-#define FORCEALIGN \
-	asm volatile( ".balign 8");
-#endif
-
-	ADC1->RSQR3 = adcno;
-	#define SPECIAL_TOUCH_ADC_SAMPLE_TIME 2
-	ADC1->SAMPTR2 = SPECIAL_TOUCH_ADC_SAMPLE_TIME<<(3*adcno);
-	int ttv = 0;
-	//FORCEALIGN
-	for( reads = 0; reads < oversample; reads++ )
-	{
-		__disable_irq();
-		FORCEALIGN
-		ADC1->CTLR2 = ADC_SWSTART | ADC_ADON | ADC_EXTSEL;
-		LCDSEGBUF->BSHR = 0x3f<<16;
-		LCDCOMBUF->BSHR = ALLCOMMASK<<16;
-		__enable_irq();
-		while(!(ADC1->STATR & ADC_EOC));
-		int tvu = ADC1->RDATAR;
-
-		__disable_irq();
-		FORCEALIGN
-		ADC1->CTLR2 = ADC_SWSTART | ADC_ADON | ADC_EXTSEL;
-		LCDSEGBUF->BSHR = 0x3f;
-		LCDCOMBUF->BSHR = ALLCOMMASK;
-		__enable_irq();
-		while(!(ADC1->STATR & ADC_EOC));
-		int tvd = ADC1->RDATAR;
-		ttv += tvd - tvu;
-	}
-	touchval = ttv;
-	LCDSEGBUF->BSHR = 0x3f<<16;
-
-	// For ??? Reason, if we wait longer here,
-	// it causes the display to uniformly fade.
-	// This is actually good to prevent oversaturation
-	// but it's still weird.
-	//
-	// We can add delay time by just increasing oversampling.
-	// Delay_Us(100);
-	funPinMode( LCDSEG0, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG1, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG2, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG3, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG4, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG5, GPIO_CFGLR_IN_PUPD );
-
-
-	// This slightly uniformyl darkens everything.
-	Delay_Us(10);
 }
 
 int main()
 {
-	SystemInit();
 	Delay_Ms(3); // Ensures USB re-enumeration after bootloader or reset; Spec demand >2.5µs ( TDDIS )
 	usb_setup();
+	SystemInit();
 
 	funGpioInitAll();
-	RCC->APB2PCENR |= RCC_APB2Periph_ADC1;
-	InitTouchADC();
-
-	//printf( "Hello!\n" );
 
 	int id = 0;
 	int didaffect = 0;
-
-	int calstage = 20;
-	int cal = 0;
-	int press = 0;
-	int touchstate = 0;
-	int touchsum = 0;
-
-	int dv = 0;
 	while(1)
 	{
-		id++;
-		int group;
 		if( !didaffect )
 		{
-			UpdateLCD( ComputeLCDMaskWithNumber( dv ) );
+			id++;
+			UpdateLCD( ComputeLCDMaskWithNumber( id >> 4 ) );
 		}
 		else
 		{
 			UpdateLCD( lastmask );
 		}
-		touchsum += touchval;
-
-		if( touchstate++ >= 3 )
-		{
-			//printf( "%d\n", touchsum );
-			if( calstage > 0 )
-			{
-				calstage--;
-				if( calstage < 16 ) cal += touchsum;
-			}
-			else
-			{
-				int event = 0;
-				int rezero = (cal>>4) - touchsum;
-				if( rezero > 100 ) cal-=1000;
-				if( rezero < -100 ) cal+=10000;
-				if( rezero > 20000 && press == 0 ) { press = 1; event = 1; }
-				if( rezero < 6000 && press == 1) { press = 0; event = 1; }
-				printf( "%d\n", rezero );
-				if( event && press )
-					dv++;
-			}
-			memcpy( scratchi + 1, &touchsum, 4 );
-			scratchi[0] = 0xaa;
-			scratchi[5] = dv;
-			touchsum = touchstate = 0;
-		}
-		//Delay_Ms(1);
-
 		//printf( "%lu %lu %lu %08lx\n", rv003usb_internal_data.delta_se0_cyccount, rv003usb_internal_data.last_se0_cyccount, rv003usb_internal_data.se0_windup, RCC->CTLR );
 #if RV003USB_EVENT_DEBUGGING
 		uint32_t * ue = GetUEvent();
@@ -352,11 +177,11 @@ int main()
 			printf( "%lu %lx %lx %lx\n", ue[0], ue[1], ue[2], ue[3] );
 		}
 #endif
-		if( start_out )
+		if( start_leds )
 		{
 			memcpy( &lastmask, scratch+1, 4 );
 			didaffect = 1;
-			start_out = 0;
+			start_leds = 0;
 			frame++;
 		}
 	}
@@ -383,14 +208,14 @@ void usb_handle_user_data( struct usb_endpoint * e, int current_endpoint, uint8_
 		e->count++;
 		if( ( e->count << 3 ) >= e->max_len )
 		{
-			start_out = e->max_len;
+			start_leds = e->max_len;
 		}
 	}
 }
 
 void usb_handle_hid_get_report_start( struct usb_endpoint * e, int reqLen, uint32_t lValueLSBIndexMSB )
 {
-	if( reqLen > sizeof( scratchi ) ) reqLen = sizeof( scratchi );
+	if( reqLen > sizeof( scratch ) ) reqLen = sizeof( scratch );
 
 	// You can check the lValueLSBIndexMSB word to decide what you want to do here
 	// But, whatever you point this at will be returned back to the host PC where
@@ -399,7 +224,7 @@ void usb_handle_hid_get_report_start( struct usb_endpoint * e, int reqLen, uint3
 	// Please note, that on some systems, for this to work, your return length must
 	// match the length defined in HID_REPORT_COUNT, in your HID report, in usb_config.h
 
-	e->opaque = scratchi;
+	e->opaque = scratch;
 	e->max_len = reqLen;
 }
 
