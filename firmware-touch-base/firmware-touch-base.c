@@ -33,7 +33,9 @@ uint8_t ledat;
 #define LCDSEG3 PC3
 #define LCDSEG4 PC4
 #define LCDSEG5 PC5
+#define ALLSEGMASK (0x3f)
 static const uint8_t pinset[4] = { LCDCOM1, LCDCOM2, LCDCOM3, LCDCOM4 };
+
 
 // from host
 static uint32_t lastmask;
@@ -87,123 +89,9 @@ uint32_t ComputeLCDMaskWithNumber( uint32_t val )
 	return mask;
 }
 
-void UpdateLCD( uint32_t mask )
+void RunTouch()
 {
-	int group;
-
-	#define drivepr GPIO_CFGLR_IN_PUPD
-	for( group = 0; group < 4; group++ )
-		funPinMode( pinset[group], drivepr );
-	funPinMode( LCDSEG0, drivepr );
-	funPinMode( LCDSEG1, drivepr );
-	funPinMode( LCDSEG2, drivepr );
-	funPinMode( LCDSEG3, drivepr );
-	funPinMode( LCDSEG4, drivepr );
-	funPinMode( LCDSEG5, drivepr );
-
-
-
-#if 0
-		// kinda works don't recommend
-		LCDSEGBUF->BSHR = 0x3f<<16;
-		for( group = 0; group < 4; group++ )
-			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
-		LCDCOMBUF->BSHR = LCDCOMMASK<<16;
-		for( group = 0; group < 4; group++ )
-		{
-			LCDSEGBUF->BSHR = lmask&0x3f;
-			//funDigitalWrite( pinset[group], 0 );
-			funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
-			Delay_Us(120); // Set higher to increase constrast
-			LCDSEGBUF->BSHR = 0x3f<<16;
-			Delay_Us(10); // Set higher to reduce contrast
-			funDigitalWrite( pinset[group], 1 );
-			Delay_Us(1); // Set higher to reduce contrast
-			funPinMode( pinset[group], GPIO_CFGLR_IN_FLOAT );
-			lmask>>=6;
-		}
-#endif
-
-	// Regular, not floating way.
-
-
-	uint8_t pinset[4] = { LCDCOM1, LCDCOM2, LCDCOM3, LCDCOM4 };
-	uint8_t commasks[4] = { LCDCOMMASK1, LCDCOMMASK2, LCDCOMMASK3, LCDCOMMASK4 };
-
-	#define drivepr GPIO_CFGLR_IN_PUPD
-
-	for( group = 0; group < 4; group++ )
-		funPinMode( pinset[group], drivepr );
-	funPinMode( LCDSEG0, drivepr );
-	funPinMode( LCDSEG1, drivepr );
-	funPinMode( LCDSEG2, drivepr );
-	funPinMode( LCDSEG3, drivepr );
-	funPinMode( LCDSEG4, drivepr );
-	funPinMode( LCDSEG5, drivepr );
-	LCDSEGBUF->BSHR = 0x3f<<16;
-	const int dithers = 1000;
-
-	int tm = ~mask;
-	for( group = 0; group < 4; group++ )
-	{
-		int d;
-		int ditherA = ALLCOMMASK;
-		int commasknthis = commasks[group] ^ ALLCOMMASK;
-		int ditherB = (commasknthis<<16);
-
-		LCDSEGBUF->BSHR = tm&0x3f;
-		for( d = 0; d < dithers; d++ )
-		{
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherB;
-		}
-		LCDSEGBUF->BSHR = 0x3f<<16;
-		tm>>=6;
-	}
-	// section 1 zero
-	LCDCOMBUF->BSHR = ALLCOMMASK<<16;
-	Delay_Us(1);
-	tm = ~mask;
-	LCDSEGBUF->BSHR = 0x3f;
-	for( group = 0; group < 4; group++ )
-	{
-		int d;
-		int ditherA = ALLCOMMASK<<16;
-		int commasknthis = commasks[group] ^ ALLCOMMASK;
-		int ditherB = (commasknthis);
-
-		LCDSEGBUF->BSHR = tm<<16;
-		for( d = 0; d < dithers; d++ )
-		{
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherB;
-		}
-		LCDSEGBUF->BSHR = 0x3f;
-		tm>>=6;
-	}
-	LCDCOMBUF->BSHR = ALLCOMMASK;
-
-
-	// Set all pins high preparing for touch.
-	for( group = 0; group < 4; group++ )
-		funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG0, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG1, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG2, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG3, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG4, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG5, GPIO_CFGLR_IN_PUPD );
-
-	for( group = 0; group < 4; group++ )
-		funDigitalWrite( pinset[group], 1 );
-	LCDSEGBUF->BSHR = 0x3f;
-
+	// Touch runs for about 1ms.
 	// Configure touch!
 	// Touch pin = 3 or 6 
 	// I tried seeing if you could get data by measuring one or the other, and the answer was basically no.
@@ -225,6 +113,7 @@ void UpdateLCD( uint32_t mask )
 		jalr a2, 1\n\
 		.long 0x00010001\n\
 		.long 0x00010001\n\
+		.long 0x00010001\n\
 		"\
 		:: [cyccnt]"r"(SysTick->CNT) : "a1", "a2"\
 	);
@@ -237,7 +126,7 @@ void UpdateLCD( uint32_t mask )
 	#define SPECIAL_TOUCH_ADC_SAMPLE_TIME 2
 	ADC1->SAMPTR2 = SPECIAL_TOUCH_ADC_SAMPLE_TIME<<(3*adcno);
 	int ttv = 0;
-	//FORCEALIGN
+	Delay_Us(1); // ADC requires a tiny bit of time to sync up.
 	for( reads = 0; reads < oversample; reads++ )
 	{
 		__disable_irq();
@@ -259,26 +148,99 @@ void UpdateLCD( uint32_t mask )
 		int tvd = ADC1->RDATAR;
 		ttv += tvd - tvu;
 	}
-	touchval = ttv;
-	LCDSEGBUF->BSHR = 0x3f<<16;
+	touchval += ttv;
+}
 
-	// For ??? Reason, if we wait longer here,
-	// it causes the display to uniformly fade.
-	// This is actually good to prevent oversaturation
-	// but it's still weird.
+// Background for below code:
+// The bottom 16 bits of BSHRC says to set these IO pins high.
+// The top 16 bits of BSHRC says to turn off the corresponding IO pins.
+
+void DitherIO( volatile uint32_t * bshr, uint32_t da, uint32_t db, int iterations ) __attribute__((noinline));
+void DitherIO( volatile uint32_t * bshr, uint32_t da, uint32_t db, int iterations )
+{
+	// This is not written this way because it needs to be fast, but that I want to make sure
+	// that it takes as many cycles on the high-side as it does on the low-side when dithering.
+	// Loops are realy slow on the 003, and no reason not to make it bigger.
 	//
-	// We can add delay time by just increasing oversampling.
-	// Delay_Us(100);
-	funPinMode( LCDSEG0, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG1, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG2, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG3, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG4, GPIO_CFGLR_IN_PUPD );
-	funPinMode( LCDSEG5, GPIO_CFGLR_IN_PUPD );
+	if( iterations == 0 ) return;
 
+	asm volatile(
+		".balign 4\n"
+		"1:\n"
+		"	c.sw %[db], 0(%[bshr])\n"
+		"	c.nop\n"
+		"	c.nop\n"
+		"	c.addi %[iterations], -1\n"
+		"	c.beqz %[iterations], 2f\n"
+		"	c.sw %[da], 0(%[bshr])\n"
+		"	c.j 1b\n"
+		"2:"
+		: [iterations]"+r"(iterations)
+		: [bshr]"r"(bshr),
+		  [da]"r"(da),
+		  [db]"r"(db)
+		:  );	
+}
 
-	// This slightly uniformyl darkens everything.
-	Delay_Us(10);
+void UpdateLCD( uint32_t mask )
+{
+	int group;
+	const int dithers = 8000;
+
+	#define drivepr GPIO_CFGLR_IN_PUPD
+	for( group = 0; group < 4; group++ )
+		funPinMode( pinset[group], drivepr );
+	funPinMode( LCDSEG0, drivepr );
+	funPinMode( LCDSEG1, drivepr );
+	funPinMode( LCDSEG2, drivepr );
+	funPinMode( LCDSEG3, drivepr );
+	funPinMode( LCDSEG4, drivepr );
+	funPinMode( LCDSEG5, drivepr );
+
+	uint8_t pinset[4] = { LCDCOM1, LCDCOM2, LCDCOM3, LCDCOM4 };
+	uint8_t commasks[4] = { LCDCOMMASK1, LCDCOMMASK2, LCDCOMMASK3, LCDCOMMASK4 };
+
+	int tm = ~mask;
+	// Reset SEG mask for this run.
+	LCDSEGBUF->BSHR = ALLSEGMASK<<16;
+	for( group = 0; group < 4; group++ )
+	{
+		int commasknthis = commasks[group] ^ ALLCOMMASK;
+
+		LCDSEGBUF->BSHR = tm&ALLSEGMASK;
+		DitherIO( &LCDCOMBUF->BSHR, (commasknthis<<16), ALLCOMMASK, dithers );
+		LCDSEGBUF->BSHR = ALLSEGMASK<<16;
+		tm>>=6;
+	}
+
+	// Turn off all SEGs (all COMs are off here too)
+	LCDCOMBUF->BSHR = ALLCOMMASK<<16;
+
+	// Delay some time - this is the "clear" time.
+	// This should be balanced with the bottom (Theoretically)
+	RunTouch();
+
+	// Now, we invert our mask (what segments we are trying to command on/off)
+	tm = ~mask;
+
+	// Set seg mask for this run.
+	LCDSEGBUF->BSHR = ALLSEGMASK;
+	for( group = 0; group < 4; group++ )
+	{
+		int commasknthis = (commasks[group] ^ ALLCOMMASK);
+
+		LCDSEGBUF->BSHR = tm<<16;
+		DitherIO( &LCDCOMBUF->BSHR, commasknthis, ALLCOMMASK<<16, dithers );
+		LCDSEGBUF->BSHR = ALLSEGMASK;
+		tm>>=6;
+	}
+	// Turn on SEGs off (All COMs are on here too)
+	LCDCOMBUF->BSHR = ALLCOMMASK;
+
+	RunTouch();
+
+	// Not sure why this is needed?
+	Delay_Us(1); 
 }
 
 int main()
@@ -290,8 +252,6 @@ int main()
 	funGpioInitAll();
 	RCC->APB2PCENR |= RCC_APB2Periph_ADC1;
 	InitTouchADC();
-
-	//printf( "Hello!\n" );
 
 	int id = 0;
 	int didaffect = 0;
@@ -315,11 +275,13 @@ int main()
 		{
 			UpdateLCD( lastmask );
 		}
-		touchsum += touchval;
 
-		if( touchstate++ >= 3 )
+		touchsum += touchval;
+		touchval = 0;
+
+		if( touchstate++ >= 1 )
 		{
-			//printf( "%d\n", touchsum );
+			printf( "%d\n", touchsum );
 			if( calstage > 0 )
 			{
 				calstage--;
@@ -333,7 +295,7 @@ int main()
 				if( rezero < -100 ) cal+=10000;
 				if( rezero > 20000 && press == 0 ) { press = 1; event = 1; }
 				if( rezero < 6000 && press == 1) { press = 0; event = 1; }
-				printf( "%d\n", rezero );
+			//	printf( "%d\n", rezero );
 				if( event && press )
 					dv++;
 			}

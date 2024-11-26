@@ -1,3 +1,7 @@
+// Example driving an LCD with 1/2 VCC COM via ch32v003.
+
+// 2024 <>< CNLohr, Under MIT/x11 License
+
 #include "ch32v003fun.h"
 #include <stdio.h>
 #include <string.h>
@@ -5,7 +9,7 @@
 
 // Allow reading and writing to the scratchpad via HID control messages.
 uint8_t scratch[63];
-volatile uint8_t start_leds = 0;
+volatile uint8_t start_lcd = 0;
 uint8_t ledat;
 
 #define LCDCOMBUF GPIOD
@@ -28,6 +32,7 @@ uint8_t ledat;
 #define LCDSEG3 PC3
 #define LCDSEG4 PC4
 #define LCDSEG5 PC5
+#define ALLSEGMASK (0x3f)
 
 // from host
 static uint32_t lastmask;
@@ -80,6 +85,37 @@ uint32_t ComputeLCDMaskWithNumber( uint32_t val )
 	return mask;
 }
 
+// Background for below code:
+// The bottom 16 bits of BSHRC says to set these IO pins high.
+// The top 16 bits of BSHRC says to turn off the corresponding IO pins.
+
+void DitherIO( volatile uint32_t * bshr, uint32_t da, uint32_t db, int iterations ) __attribute__((noinline));
+void DitherIO( volatile uint32_t * bshr, uint32_t da, uint32_t db, int iterations )
+{
+	// This is not written this way because it needs to be fast, but that I want to make sure
+	// that it takes as many cycles on the high-side as it does on the low-side when dithering.
+	// Loops are realy slow on the 003, and no reason not to make it bigger.
+	//
+	if( iterations == 0 ) return;
+
+	asm volatile(
+		".balign 4\n"
+		"1:\n"
+		"	c.sw %[db], 0(%[bshr])\n"
+		"	c.nop\n"
+		"	c.nop\n"
+		"	c.addi %[iterations], -1\n"
+		"	c.beqz %[iterations], 2f\n"
+		"	c.sw %[da], 0(%[bshr])\n"
+		"	c.j 1b\n"
+		"2:"
+		: [iterations]"+r"(iterations)
+		: [bshr]"r"(bshr),
+		  [da]"r"(da),
+		  [db]"r"(db)
+		:  );	
+}
+
 void UpdateLCD( uint32_t mask )
 {
 	int group;
@@ -87,7 +123,10 @@ void UpdateLCD( uint32_t mask )
 	uint8_t commasks[4] = { LCDCOMMASK1, LCDCOMMASK2, LCDCOMMASK3, LCDCOMMASK4 };
 
 	#define drivepr GPIO_CFGLR_IN_PUPD
+	#define CLEAR_TIME 1000 // This controls the contrast.  Higher = lighter.
+	const int dithers = 8000;
 
+	// Make sure everything is setup for pull-up / pull-down
 	for( group = 0; group < 4; group++ )
 		funPinMode( pinset[group], drivepr );
 	funPinMode( LCDSEG0, drivepr );
@@ -96,55 +135,46 @@ void UpdateLCD( uint32_t mask )
 	funPinMode( LCDSEG3, drivepr );
 	funPinMode( LCDSEG4, drivepr );
 	funPinMode( LCDSEG5, drivepr );
-	LCDSEGBUF->BSHR = 0x3f<<16;
-	const int dithers = 2000;
 
 	int tm = ~mask;
+
+	// Reset SEG mask for this run.
+	LCDSEGBUF->BSHR = ALLSEGMASK<<16;
 	for( group = 0; group < 4; group++ )
 	{
-		int d;
-		int ditherA = ALLCOMMASK;
 		int commasknthis = commasks[group] ^ ALLCOMMASK;
-		int ditherB = (commasknthis<<16);
 
-		LCDSEGBUF->BSHR = tm&0x3f;
-		for( d = 0; d < dithers; d++ )
-		{
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherB;
-		}
-		LCDSEGBUF->BSHR = 0x3f<<16;
+		LCDSEGBUF->BSHR = tm&ALLSEGMASK;
+		DitherIO( &LCDCOMBUF->BSHR, (commasknthis<<16), ALLCOMMASK, dithers );
+		LCDSEGBUF->BSHR = ALLSEGMASK<<16;
 		tm>>=6;
 	}
-	// section 1 zero
+
+	// Turn off all SEGs (all COMs are off here too)
 	LCDCOMBUF->BSHR = ALLCOMMASK<<16;
-	Delay_Us(0);
+
+	// Delay some time - this is the "clear" time.
+	// This should be balanced with the bottom (Theoretically)
+	Delay_Us( CLEAR_TIME );
+
+	// Now, we invert our mask (what segments we are trying to command on/off)
 	tm = ~mask;
-	LCDSEGBUF->BSHR = 0x3f;
+
+	// Set seg mask for this run.
+	LCDSEGBUF->BSHR = ALLSEGMASK;
 	for( group = 0; group < 4; group++ )
 	{
-		int d;
-		int ditherA = ALLCOMMASK<<16;
-		int commasknthis = commasks[group] ^ ALLCOMMASK;
-		int ditherB = (commasknthis);
+		int commasknthis = (commasks[group] ^ ALLCOMMASK);
 
 		LCDSEGBUF->BSHR = tm<<16;
-		for( d = 0; d < dithers; d++ )
-		{
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherA;
-			LCDCOMBUF->BSHR = ditherB;
-		}
-		LCDSEGBUF->BSHR = 0x3f;
+		DitherIO( &LCDCOMBUF->BSHR, commasknthis, ALLCOMMASK<<16, dithers );
+		LCDSEGBUF->BSHR = ALLSEGMASK;
 		tm>>=6;
 	}
+	// Turn on SEGs off (All COMs are on here too)
 	LCDCOMBUF->BSHR = ALLCOMMASK;
-	Delay_Us(1000);
+
+	Delay_Us( CLEAR_TIME );
 
 }
 
@@ -169,19 +199,12 @@ int main()
 		{
 			UpdateLCD( lastmask );
 		}
-		//printf( "%lu %lu %lu %08lx\n", rv003usb_internal_data.delta_se0_cyccount, rv003usb_internal_data.last_se0_cyccount, rv003usb_internal_data.se0_windup, RCC->CTLR );
-#if RV003USB_EVENT_DEBUGGING
-		uint32_t * ue = GetUEvent();
-		if( ue )
-		{
-			printf( "%lu %lx %lx %lx\n", ue[0], ue[1], ue[2], ue[3] );
-		}
-#endif
-		if( start_leds )
+
+		if( start_lcd )
 		{
 			memcpy( &lastmask, scratch+1, 4 );
 			didaffect = 1;
-			start_leds = 0;
+			start_lcd = 0;
 			frame++;
 		}
 	}
@@ -208,7 +231,7 @@ void usb_handle_user_data( struct usb_endpoint * e, int current_endpoint, uint8_
 		e->count++;
 		if( ( e->count << 3 ) >= e->max_len )
 		{
-			start_leds = e->max_len;
+			start_lcd = e->max_len;
 		}
 	}
 }
