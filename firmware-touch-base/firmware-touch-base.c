@@ -3,8 +3,7 @@
 #include <string.h>
 #include "rv003usb.h"
 
-
-#include "ch32v003_touch.h"
+//#include "ch32v003_touch.h"
 
 // Allow reading and writing to the scratchpad via HID control messages.
 uint8_t scratch[63];
@@ -97,11 +96,10 @@ void RunTouch()
 	// I tried seeing if you could get data by measuring one or the other, and the answer was basically no.
 	// I couldn't get any extra data.
 	int reads = 0;
-	const int adcno = 3;
+	int group;
 	const int oversample = 300; // Has significant impact over contrast.
 
-#if 1
-#define FORCEALIGN \
+#define FORCEALIGNADC \
 	asm volatile( \
 		"\n\
 		.balign 4\n\
@@ -113,40 +111,74 @@ void RunTouch()
 		jalr a2, 1\n\
 		.long 0x00010001\n\
 		.long 0x00010001\n\
-		.long 0x00010001\n\
 		"\
 		:: [cyccnt]"r"(SysTick->CNT) : "a1", "a2"\
 	);
-#else
-#define FORCEALIGN \
-	asm volatile( ".balign 8");
-#endif
 
-	ADC1->RSQR3 = adcno;
-	#define SPECIAL_TOUCH_ADC_SAMPLE_TIME 2
-	ADC1->SAMPTR2 = SPECIAL_TOUCH_ADC_SAMPLE_TIME<<(3*adcno);
 	int ttv = 0;
-	Delay_Us(1); // ADC requires a tiny bit of time to sync up.
+
+	const int adcno = 3;
+	#define SPECIAL_TOUCH_ADC_SAMPLE_TIME 1
+
+	__disable_irq();
+	FORCEALIGNADC
+	ADC1->RSQR3 = adcno;
+	ADC1->SAMPTR2 = SPECIAL_TOUCH_ADC_SAMPLE_TIME<<(3*adcno);
+	__enable_irq();
+
+	Delay_Us(1);
 	for( reads = 0; reads < oversample; reads++ )
 	{
+
+#if LOCKIN_AMP_MODE
+		// Lock-in amplifier mode only useful for when we can control timing of inner loop
+		// I.e. if using DMA to do touch reads.  Don't do this 
+
 		__disable_irq();
-		FORCEALIGN
+		FORCEALIGNADC
 		ADC1->CTLR2 = ADC_SWSTART | ADC_ADON | ADC_EXTSEL;
 		LCDSEGBUF->BSHR = 0x3f<<16;
 		LCDCOMBUF->BSHR = ALLCOMMASK<<16;
 		__enable_irq();
 		while(!(ADC1->STATR & ADC_EOC));
 		int tvu = ADC1->RDATAR;
+#else
+		// Non-lock-in mode (You should use this)
+		LCDSEGBUF->BSHR = 0x3f<<16;
+		LCDCOMBUF->BSHR = ALLCOMMASK<<16;
+		for( group = 0; group < 4; group++ )
+			funPinMode( pinset[group], GPIO_CFGLR_OUT_2Mhz_PP );
+		funPinMode( LCDSEG0, GPIO_CFGLR_OUT_2Mhz_PP );
+		funPinMode( LCDSEG1, GPIO_CFGLR_OUT_2Mhz_PP );
+		funPinMode( LCDSEG2, GPIO_CFGLR_OUT_2Mhz_PP );
+		funPinMode( LCDSEG3, GPIO_CFGLR_OUT_2Mhz_PP );
+		funPinMode( LCDSEG4, GPIO_CFGLR_OUT_2Mhz_PP );
+		funPinMode( LCDSEG5, GPIO_CFGLR_OUT_2Mhz_PP );
+
+		#define drivepr 
+		for( group = 0; group < 4; group++ )
+			funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
+		funPinMode( LCDSEG0, GPIO_CFGLR_IN_PUPD );
+		funPinMode( LCDSEG1, GPIO_CFGLR_IN_PUPD );
+		funPinMode( LCDSEG2, GPIO_CFGLR_IN_PUPD );
+		funPinMode( LCDSEG3, GPIO_CFGLR_IN_PUPD );
+		funPinMode( LCDSEG4, GPIO_CFGLR_IN_PUPD );
+		funPinMode( LCDSEG5, GPIO_CFGLR_IN_PUPD );
+#endif
 
 		__disable_irq();
-		FORCEALIGN
+		FORCEALIGNADC
 		ADC1->CTLR2 = ADC_SWSTART | ADC_ADON | ADC_EXTSEL;
 		LCDSEGBUF->BSHR = 0x3f;
 		LCDCOMBUF->BSHR = ALLCOMMASK;
 		__enable_irq();
 		while(!(ADC1->STATR & ADC_EOC));
 		int tvd = ADC1->RDATAR;
-		ttv += tvd - tvu;
+#if LOCKIN_AMP_MODE
+		ttv += tvu - tvd;
+#else
+		ttv += tvd;
+#endif
 	}
 	touchval += ttv;
 }
@@ -251,7 +283,6 @@ int main()
 
 	funGpioInitAll();
 	RCC->APB2PCENR |= RCC_APB2Periph_ADC1;
-	InitTouchADC();
 
 	int id = 0;
 	int didaffect = 0;
@@ -279,9 +310,9 @@ int main()
 		touchsum += touchval;
 		touchval = 0;
 
-		if( touchstate++ >= 1 )
+		if( ++touchstate >= 1 )
 		{
-			printf( "%d\n", touchsum );
+			//printf( "%d\n", touchsum );
 			if( calstage > 0 )
 			{
 				calstage--;
@@ -293,8 +324,8 @@ int main()
 				int rezero = (cal>>4) - touchsum;
 				if( rezero > 100 ) cal-=1000;
 				if( rezero < -100 ) cal+=10000;
-				if( rezero > 20000 && press == 0 ) { press = 1; event = 1; }
-				if( rezero < 6000 && press == 1) { press = 0; event = 1; }
+				if( rezero > 4000 && press == 0 ) { press = 1; event = 1; }
+				if( rezero < 2000 && press == 1) { press = 0; event = 1; }
 			//	printf( "%d\n", rezero );
 				if( event && press )
 					dv++;
@@ -304,9 +335,7 @@ int main()
 			scratchi[5] = dv;
 			touchsum = touchstate = 0;
 		}
-		//Delay_Ms(1);
 
-		//printf( "%lu %lu %lu %08lx\n", rv003usb_internal_data.delta_se0_cyccount, rv003usb_internal_data.last_se0_cyccount, rv003usb_internal_data.se0_windup, RCC->CTLR );
 #if RV003USB_EVENT_DEBUGGING
 		uint32_t * ue = GetUEvent();
 		if( ue )
