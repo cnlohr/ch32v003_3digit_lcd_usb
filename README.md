@@ -1,6 +1,6 @@
 # ch32v003_3digit_lcd_usb
 
-USB, Touch and Driver for 3-digit 7-segment LCDs on CH32V003
+USB, Touch and Driver for 3-digit 7-segment TN LCDs on CH32V003
 
 (Will be YT link when released)
 
