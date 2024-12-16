@@ -52,6 +52,12 @@ or if you, forgot, cd into the folder and run:
 git submodule update --init --recursive
 ```
 
+## Touch Sensing
+
+To perform touch sensing, we drive the line low, then, in concert with starting the ADC sample (and making sure the ADC setup/sample is aligned in time to Fcpu/2) we apply a pull-up resistor to all the ports on the LCD.
+
+This causes a measurement to be made as the voltage on the pins common to the whole LCD is rising and this gives us our measurement.
+
 ## Waveforms
 
 For basic LCD output, you can use a fairly simple waveform that has 10 stages.
