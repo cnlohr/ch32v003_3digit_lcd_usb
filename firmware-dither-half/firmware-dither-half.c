@@ -7,6 +7,8 @@
 #include <string.h>
 #include "rv003usb.h"
 
+#define FLIP
+
 // Allow reading and writing to the scratchpad via HID control messages.
 uint8_t scratch[63];
 volatile uint8_t start_lcd = 0;
@@ -49,6 +51,26 @@ static uint8_t frame;
 //  ggg
 // ab0000cd0000ef0000g0
 
+#ifdef FLIP
+const uint32_t digits[16] = {
+	0b11000001000011000010, // 0
+	0b10000000000010000000, // 1
+	0b01000011000010000010, // 2
+	0b11000010000010000010, // 3
+	0b10000010000011000000, // 4
+	0b11000010000001000010, // 5
+	0b11000011000001000010, // 6
+	0b10000000000011000010, // 7
+	0b11000011000011000010, // 8
+	0b11000010000011000010, // 9
+	0b10000011000011000010, // A
+	0b11000011000001000000, // b
+	0b01000011000000000000, // c
+	0b11000011000010000000, // d
+	0b01000011000001000010, // e
+	0b00000011000001000010, // f
+};
+#else
 const uint32_t digits[16] = {
 	0b11000001000011000010, // 0
 	0b00000001000001000000, // 1
@@ -67,6 +89,7 @@ const uint32_t digits[16] = {
 	0b11000010000010000010, // e
 	0b11000010000010000000, // f
 };
+#endif
 
 uint32_t ComputeLCDMaskWithNumber( uint32_t val )
 {
@@ -74,13 +97,21 @@ uint32_t ComputeLCDMaskWithNumber( uint32_t val )
 	uint32_t mask = 0;
 	for( i = 0; i < 3; i++ )
 	{
+#ifdef FLIP
+		uint32_t vv = (val) & 0xff;
+#else
 		uint32_t vv = (val >> 8);
+#endif
 		mask <<= 2;
 		if( vv > 0 || i == 2 )
 		{
 			mask |= digits[vv & 0xf];
 		}
+#ifdef FLIP
+		val >>= 4;
+#else
 		val <<= 4;
+#endif
 	}
 	return mask;
 }
@@ -193,7 +224,7 @@ int main()
 		if( !didaffect )
 		{
 			id++;
-			UpdateLCD( ComputeLCDMaskWithNumber( id >> 4 ) );
+			UpdateLCD( ComputeLCDMaskWithNumber( id >> 0 ) );
 		}
 		else
 		{

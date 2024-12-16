@@ -38,9 +38,6 @@ static const uint8_t pinset[4] = { LCDCOM1, LCDCOM2, LCDCOM3, LCDCOM4 };
 
 // from host
 static uint32_t lastmask;
-
-
-static uint8_t frame;
 static uint32_t touchval;
 
 // LCD Is 10PIN TN Positive 3-Digits 7 Segment LCD Panel 3.0V
@@ -155,7 +152,6 @@ void RunTouch()
 		funPinMode( LCDSEG4, GPIO_CFGLR_OUT_2Mhz_PP );
 		funPinMode( LCDSEG5, GPIO_CFGLR_OUT_2Mhz_PP );
 
-		#define drivepr 
 		for( group = 0; group < 4; group++ )
 			funPinMode( pinset[group], GPIO_CFGLR_IN_PUPD );
 		funPinMode( LCDSEG0, GPIO_CFGLR_IN_PUPD );
@@ -229,8 +225,7 @@ void UpdateLCD( uint32_t mask )
 	funPinMode( LCDSEG4, drivepr );
 	funPinMode( LCDSEG5, drivepr );
 
-	uint8_t pinset[4] = { LCDCOM1, LCDCOM2, LCDCOM3, LCDCOM4 };
-	uint8_t commasks[4] = { LCDCOMMASK1, LCDCOMMASK2, LCDCOMMASK3, LCDCOMMASK4 };
+	static const uint8_t commasks[4] = { LCDCOMMASK1, LCDCOMMASK2, LCDCOMMASK3, LCDCOMMASK4 };
 
 	int tm = ~mask;
 	// Reset SEG mask for this run.
@@ -297,7 +292,6 @@ int main()
 	while(1)
 	{
 		id++;
-		int group;
 		if( !didaffect )
 		{
 			UpdateLCD( ComputeLCDMaskWithNumber( dv ) );
@@ -326,7 +320,6 @@ int main()
 				if( rezero < -100 ) cal+=10000;
 				if( rezero > 4000 && press == 0 ) { press = 1; event = 1; }
 				if( rezero < 2000 && press == 1) { press = 0; event = 1; }
-			//	printf( "%d\n", rezero );
 				if( event && press )
 					dv++;
 			}
@@ -348,7 +341,6 @@ int main()
 			memcpy( &lastmask, scratch+1, 4 );
 			didaffect = 1;
 			start_out = 0;
-			frame++;
 		}
 	}
 }
