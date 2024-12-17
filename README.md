@@ -2,7 +2,7 @@
 
 USB, Touch and Driver for 3-digit 7-segment TN LCDs on CH32V003
 
-(Will be YT link when released)
+[Youtube Video](https://www.youtube.com/watch?v=KNDRUWlsu0k)
 
 ![glamour](docs/Thumb1080.jpg)
 
